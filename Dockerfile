@@ -31,6 +31,7 @@ RUN apt-get install -y --no-install-recommends \
     libapache2-mod-fcgid \
     curl \
     postgresql-client \
+    tzdata \
     libtest-deep-perl \
     libtest-exception-perl \
     libtest-output-perl \
@@ -50,6 +51,7 @@ RUN apt-get install -y --no-install-recommends \
     libmath-round-perl \
     libtext-csv-xs-perl \
     libtemplate-perl \
+    libtext-iconv-perl \
     libcam-pdf-perl \
     libxml-libxml-perl \
     libxml-writer-perl \
@@ -114,7 +116,8 @@ FROM base AS app
 
 ENV APACHE_RUN_USER=www-data \
     APACHE_RUN_GROUP=www-data \
-    APACHE_LOG_DIR=/var/log/apache2
+    APACHE_LOG_DIR=/var/log/apache2 \
+    TZ=UTC
 
 # Apache wiring (changes rarely — keep above COPY . .)
 COPY docker/apache/kivitendo.conf /etc/apache2/sites-available/kivitendo.conf

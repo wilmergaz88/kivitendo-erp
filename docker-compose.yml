@@ -31,6 +31,7 @@ services:
     restart: unless-stopped
     environment:
       ROLE:             app
+      TZ:               ${TZ:-UTC}
       DB_HOST:          db
       DB_PORT:          ${DB_PORT:-5432}
       DB_NAME:          ${DB_NAME:-kivitendo_auth}
@@ -68,6 +69,7 @@ services:
     restart: unless-stopped
     environment:
       ROLE:             task-server
+      TZ:               ${TZ:-UTC}
       DB_HOST:          db
       DB_PORT:          ${DB_PORT:-5432}
       DB_NAME:          ${DB_NAME:-kivitendo_auth}
