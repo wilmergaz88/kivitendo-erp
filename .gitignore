@@ -1,3 +1,4 @@
+/.env
 /config/authentication.pl
 /config/console.conf
 /config/kivitendo.conf
