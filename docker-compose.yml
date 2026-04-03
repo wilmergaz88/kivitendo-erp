@@ -23,6 +23,10 @@ services:
     build:
       context: .
       target: app
+      cache_from:
+        - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}-base
+        - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       ROLE:             app
@@ -55,6 +59,10 @@ services:
     build:
       context: .
       target: app
+      cache_from:
+        - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}-base
+        - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       ROLE:             task-server
