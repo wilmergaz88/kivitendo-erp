@@ -2,102 +2,112 @@
 set -euo pipefail
 
 APP_DIR="/var/www/kivitendo-erp"
-CONFIG_FILE="${APP_DIR}/config/kivitendo.conf"
-CONFIG_DEFAULT="${APP_DIR}/config/kivitendo.conf.default"
+KIVITENDO_CONFIG="${APP_DIR}/config/kivitendo.conf"
+KIVITENDO_CONFIG_DEFAULT="${APP_DIR}/config/kivitendo.conf.default"
+WEBSERVER_USER="www-data"
+APACHE_PID_FILE="/var/run/apache2/apache2.pid"
+TASK_SERVER_PID_GLOB="${APP_DIR}/users/pid/*.pid"
+POSTGRES_READY_TIMEOUT_SECONDS=60
 
-cd "$APP_DIR"
+patch_ini_key_in_section() {
+    local section="$1"
+    local next_section="$2"
+    local key="$3"
+    local value="$4"
+    sed -i "/^\[${section}\]$/,/^\[${next_section}\]$/ {
+        s|^${key}\s*=.*|${key} = ${value}|
+    }" "$KIVITENDO_CONFIG"
+}
 
-# ---------------------------------------------------------------------------
-# 1. Generate kivitendo.conf from defaults, patching with environment vars
-#
-# IMPORTANT: Keys like 'host', 'port', 'user', 'password' appear in multiple
-# INI sections. All sed substitutions are scoped to their specific section
-# using address ranges (/\[section\]/,/\[next-section\]/) to avoid
-# corrupting other sections (LDAP, IMAP, testing, etc.).
-# ---------------------------------------------------------------------------
-echo ">>> Generating config/kivitendo.conf ..."
-cp "$CONFIG_DEFAULT" "$CONFIG_FILE"
+patch_ini_key_in_section_uncomment_if_needed() {
+    local section="$1"
+    local next_section="$2"
+    local key="$3"
+    local value="$4"
+    sed -i "/^\[${section}\]$/,/^\[${next_section}\]$/ {
+        s|^#${key}\s*=.*|${key} = ${value}|
+        s|^${key}\s*=.*|${key} = ${value}|
+    }" "$KIVITENDO_CONFIG"
+}
 
-# [authentication] – admin password
-sed -i '/^\[authentication\]$/,/^\[authentication\/database\]$/ {
-    s|^admin_password = .*|admin_password = '"${ADMIN_PASSWORD:-admin123}"'|
-}' "$CONFIG_FILE"
+generate_config_from_defaults() {
+    cp "$KIVITENDO_CONFIG_DEFAULT" "$KIVITENDO_CONFIG"
 
-# [authentication/database] – PostgreSQL connection for auth DB
-sed -i '/^\[authentication\/database\]$/,/^\[authentication\/ldap\]$/ {
-    s|^host\s*=.*|host     = '"${DB_HOST:-db}"'|
-    s|^port\s*=.*|port     = '"${DB_PORT:-5432}"'|
-    s|^db\s*=.*|db       = '"${DB_NAME:-kivitendo_auth}"'|
-    s|^user\s*=.*|user     = '"${DB_USER:-postgres}"'|
-    s|^password\s*=.*|password = '"${DB_PASSWORD:-}"'|
-}' "$CONFIG_FILE"
+    patch_ini_key_in_section \
+        "authentication" "authentication/database" \
+        "admin_password" "${ADMIN_PASSWORD:-admin123}"
 
-# [mail_delivery] – SMTP host and port (MailHog by default)
-sed -i '/^\[mail_delivery\]$/,/^\[imap_client\]$/ {
-    s|^host = .*|host = '"${SMTP_HOST:-mailhog}"'|
-}' "$CONFIG_FILE"
+    patch_ini_key_in_section "authentication\/database" "authentication\/ldap" "host"     "${DB_HOST:-db}"
+    patch_ini_key_in_section "authentication\/database" "authentication\/ldap" "port"     "${DB_PORT:-5432}"
+    patch_ini_key_in_section "authentication\/database" "authentication\/ldap" "db"       "${DB_NAME:-kivitendo_auth}"
+    patch_ini_key_in_section "authentication\/database" "authentication\/ldap" "user"     "${DB_USER:-postgres}"
+    patch_ini_key_in_section "authentication\/database" "authentication\/ldap" "password" "${DB_PASSWORD:-}"
 
-if [ -n "${SMTP_PORT:-}" ]; then
-    sed -i '/^\[mail_delivery\]$/,/^\[imap_client\]$/ {
-        s|^#port = .*|port = '"$SMTP_PORT"'|
-        s|^port = .*|port = '"$SMTP_PORT"'|
-    }' "$CONFIG_FILE"
-fi
+    patch_ini_key_in_section "mail_delivery" "imap_client" "host" "${SMTP_HOST:-mailhog}"
 
-# [secrets] – master encryption key
-if [ -n "${SECRET_MASTER_KEY:-}" ]; then
-    sed -i '/^\[secrets\]$/,/^\[console\]$/ {
-        s|^master_key = .*|master_key = '"$SECRET_MASTER_KEY"'|
-    }' "$CONFIG_FILE"
-fi
-
-# [task_server] – drop privileges to www-data (task server's own setuid support)
-sed -i '/^\[task_server\]$/,/^\[task_server\/notify_on_failure\]$/ {
-    s|^run_as = .*|run_as = www-data|
-}' "$CONFIG_FILE"
-
-echo ">>> config/kivitendo.conf written."
-
-# ---------------------------------------------------------------------------
-# 2. Wait for PostgreSQL to be ready
-# ---------------------------------------------------------------------------
-echo ">>> Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432} ..."
-MAX_WAIT=60
-WAITED=0
-until pg_isready -h "${DB_HOST:-db}" -p "${DB_PORT:-5432}" -U "${DB_USER:-postgres}" -q; do
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
-        echo "ERROR: PostgreSQL not ready after ${MAX_WAIT}s. Aborting."
-        exit 1
+    if [ -n "${SMTP_PORT:-}" ]; then
+        patch_ini_key_in_section_uncomment_if_needed \
+            "mail_delivery" "imap_client" \
+            "port" "$SMTP_PORT"
     fi
-    sleep 2
-    WAITED=$((WAITED + 2))
-done
-echo ">>> PostgreSQL is ready."
 
-# ---------------------------------------------------------------------------
-# 3. Fix permissions on volume-mounted runtime directories
-#    (volumes are initially owned by root; app runs as www-data)
-# ---------------------------------------------------------------------------
-mkdir -p users/pid spool webdav
-chown -R www-data:www-data users spool webdav config 2>/dev/null || true
+    if [ -n "${SECRET_MASTER_KEY:-}" ]; then
+        patch_ini_key_in_section \
+            "secrets" "console" \
+            "master_key" "$SECRET_MASTER_KEY"
+    fi
 
-# ---------------------------------------------------------------------------
-# 4. Start the requested service
-# ---------------------------------------------------------------------------
-ROLE="${ROLE:-app}"
+    patch_ini_key_in_section \
+        "task_server" "task_server\/notify_on_failure" \
+        "run_as" "$WEBSERVER_USER"
+}
 
-if [ "$ROLE" = "task-server" ]; then
-    # Remove stale PID file left over from a previous container run.
-    # Daemon::Generic refuses to start if the PID file already exists.
-    rm -f users/pid/*.pid
+wait_until_postgres_accepts_connections() {
+    local elapsed=0
+    until pg_isready -h "${DB_HOST:-db}" -p "${DB_PORT:-5432}" -U "${DB_USER:-postgres}" -q; do
+        if [ "$elapsed" -ge "$POSTGRES_READY_TIMEOUT_SECONDS" ]; then
+            echo "ERROR: PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432} not ready after ${POSTGRES_READY_TIMEOUT_SECONDS}s."
+            exit 1
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+}
 
-    echo ">>> Starting kivitendo task server (foreground mode) ..."
-    # The task server drops privileges to 'run_as' user via its own setuid()
+grant_webserver_ownership_of_runtime_directories() {
+    mkdir -p users/pid spool webdav
+    chown -R "$WEBSERVER_USER:$WEBSERVER_USER" users spool webdav config 2>/dev/null || true
+}
+
+remove_stale_daemon_pid_files() {
+    rm -f $TASK_SERVER_PID_GLOB
+}
+
+remove_stale_apache_pid_file() {
+    rm -f "$APACHE_PID_FILE"
+}
+
+start_task_server_in_foreground() {
+    remove_stale_daemon_pid_files
     exec perl scripts/task_server.pl -f start
-else
-    # Remove stale Apache PID to prevent "Address already in use" on restart
-    rm -f /var/run/apache2/apache2.pid
+}
 
-    echo ">>> Starting Apache2 ..."
+start_apache_in_foreground() {
+    remove_stale_apache_pid_file
     exec apache2ctl -D FOREGROUND
-fi
+}
+
+main() {
+    cd "$APP_DIR"
+
+    generate_config_from_defaults
+    wait_until_postgres_accepts_connections
+    grant_webserver_ownership_of_runtime_directories
+
+    case "${ROLE:-app}" in
+        task-server) start_task_server_in_foreground ;;
+        *)           start_apache_in_foreground ;;
+    esac
+}
+
+main
