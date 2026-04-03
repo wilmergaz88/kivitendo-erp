@@ -21,6 +21,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Layer B: web server + Perl modules (~400 MB, changes when deps added) ───
+# Note: packages removed from Ubuntu 22.04 universe are intentionally omitted
+# here and installed via cpanm in Layer C instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-fcgid \
@@ -31,17 +33,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtest-output-perl \
     libwww-perl \
     liburi-find-perl \
-    libsys-cpu-perl \
-    libthread-pool-simple-perl \
     libdbi-perl \
     liblist-moreutils-perl \
     libyaml-perl \
-    libregexp-ipv6-perl \
-    libpbkdf2-tiny-perl \
     librose-object-perl \
     librose-db-perl \
     librose-db-object-perl \
-    libdigest-perl-md5-perl \
     liblist-utilsby-perl \
     libalgorithm-checkdigits-perl \
     libhtml-restrict-perl \
@@ -67,16 +64,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfile-copy-recursive-perl \
     librest-client-perl \
     libipc-run-perl \
-    libfile-mimeinfo-perl \
     libencode-imaputf7-perl \
     libmail-imapclient-perl \
     libhttp-dav-perl \
     libpdf-api2-perl \
     libppi-perl \
-    libuuid-tiny-perl \
     libcryptx-perl \
     libfcgi-perl \
-    libdaemon-generic-perl \
     libclone-perl \
     libdatetime-perl \
     libparams-validate-perl \
@@ -86,13 +80,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjson-perl \
     libcgi-pm-perl \
     libtry-tiny-perl \
-    libfile-flock-perl \
-    libexception-class-perl \
     cpanminus \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Layer C: CPAN modules not available as Debian packages (~5 MB) ──────────
-RUN cpanm --notest HTML::Query
+# ── Layer C: CPAN modules ────────────────────────────────────────────────────
+# Packages removed from Ubuntu 22.04 universe (Exception::Class and others
+# were absorbed into Perl itself or dropped; File::MimeInfo, UUID::Tiny,
+# Regexp::IPv6, File::Flock, Daemon::Generic, Sys::CPU, PBKDF2::Tiny and
+# Digest::Perl::MD5 are no longer shipped as distro packages) plus
+# HTML::Query which was never packaged for Debian/Ubuntu.
+RUN cpanm --notest \
+    Exception::Class \
+    File::MimeInfo \
+    UUID::Tiny \
+    Regexp::IPv6 \
+    File::Flock \
+    Daemon::Generic \
+    Sys::CPU \
+    Thread::Pool::Simple \
+    PBKDF2::Tiny \
+    Digest::Perl::MD5 \
+    HTML::Query
 
 
 # ── app stage: inherits all deps from base, rebuilt on code/config changes ──
