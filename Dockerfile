@@ -84,7 +84,8 @@ RUN apt-get install -y --no-install-recommends \
     libcgi-pm-perl \
     libtry-tiny-perl \
     cpanminus \
-    make \
+    build-essential \
+    libperl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Layer C: CPAN modules ────────────────────────────────────────────────────
