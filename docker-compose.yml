@@ -23,6 +23,7 @@ services:
     build:
       context: .
       target: app
+      network: host
       cache_from:
         - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}-base
         - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
@@ -59,6 +60,7 @@ services:
     build:
       context: .
       target: app
+      network: host
       cache_from:
         - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}-base
         - ${IMAGE_REPO:-kivitendo-erp}:${IMAGE_TAG:-latest}
