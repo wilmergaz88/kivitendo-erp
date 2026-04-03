@@ -84,6 +84,7 @@ RUN apt-get install -y --no-install-recommends \
     libcgi-pm-perl \
     libtry-tiny-perl \
     cpanminus \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Layer C: CPAN modules ────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ RUN cpanm --notest \
     Thread::Pool::Simple \
     PBKDF2::Tiny \
     Digest::Perl::MD5 \
+    Badger \
     HTML::Query
 
 
