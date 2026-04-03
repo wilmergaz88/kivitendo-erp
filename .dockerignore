@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Runtime directories (mounted as volumes)
+users/
+spool/
+webdav/
+
+# Local config (generated at container startup from .default)
+config/kivitendo.conf
+
+# Environment files with secrets
+.env
+
+# Documentation PDFs (large binaries not needed in image)
+doc/*.pdf
+
+# Test output and coverage reports
+t/test-output/
+cover_db/
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

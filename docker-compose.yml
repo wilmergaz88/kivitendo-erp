@@ -1,0 +1,69 @@
+services:
+
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER:     ${DB_USER:-kivitendo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-kivitendo}
+      POSTGRES_DB:       ${DB_NAME:-kivitendo_auth}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-kivitendo} -d ${DB_NAME:-kivitendo_auth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ROLE:     app
+      DB_HOST:  db
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - kivi_users:/var/www/kivitendo-erp/users
+      - kivi_spool:/var/www/kivitendo-erp/spool
+      - kivi_webdav:/var/www/kivitendo-erp/webdav
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  task-server:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ROLE:     task-server
+      DB_HOST:  db
+    volumes:
+      - kivi_users:/var/www/kivitendo-erp/users
+      - kivi_spool:/var/www/kivitendo-erp/spool
+      - kivi_webdav:/var/www/kivitendo-erp/webdav
+    depends_on:
+      app:
+        condition: service_healthy
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_PORT:-8025}:8025"
+    # SMTP on port 1025 (internal only, referenced by SMTP_HOST=mailhog, SMTP_PORT=1025)
+
+volumes:
+  postgres_data:
+  kivi_users:
+  kivi_spool:
+  kivi_webdav:
