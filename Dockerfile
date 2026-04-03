@@ -2,12 +2,15 @@ FROM ubuntu:22.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Ubuntu 22.04 needs "universe" for several Perl packages (per official docs)
+# Layer A: fetch package lists + heavy document-generation tools
+# (~1.5 GB, changes almost never).
+# Package lists are kept (NOT cleaned up here) so that Layer B can call
+# apt-get install without a second network round-trip.  The lists are only
+# removed at the end of Layer B.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository universe \
     && apt-get update \
-    # ── Layer A: document-generation tools (~1.5 GB, changes almost never) ───
     && apt-get install -y --no-install-recommends \
     texlive-latex-recommended \
     texlive-fonts-recommended \
@@ -17,13 +20,13 @@ RUN apt-get update \
     libreoffice-writer \
     python3-uno \
     ghostscript \
-    html2ps \
-    && rm -rf /var/lib/apt/lists/*
+    html2ps
 
 # ── Layer B: web server + Perl modules (~400 MB, changes when deps added) ───
-# Note: packages removed from Ubuntu 22.04 universe are intentionally omitted
-# here and installed via cpanm in Layer C instead.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# No apt-get update here – inherits the package lists from Layer A.
+# Packages removed from Ubuntu 22.04 universe are omitted and installed via
+# cpanm in Layer C instead.
+RUN apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-fcgid \
     curl \
