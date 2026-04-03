@@ -3,15 +3,17 @@ services:
   db:
     image: postgres:15
     restart: unless-stopped
-    env_file: .env
     environment:
-      POSTGRES_USER:     ${DB_USER:-kivitendo}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-kivitendo}
-      POSTGRES_DB:       ${DB_NAME:-kivitendo_auth}
+      POSTGRES_USER:              ${DB_USER:-postgres}
+      POSTGRES_PASSWORD:          ${DB_PASSWORD:-}
+      POSTGRES_DB:                ${DB_NAME:-kivitendo_auth}
+      # kivitendo connects with an empty password by default (matches
+      # kivitendo.conf.default). trust auth avoids connection failures.
+      POSTGRES_HOST_AUTH_METHOD:  trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-kivitendo} -d ${DB_NAME:-kivitendo_auth}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-kivitendo_auth}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -20,10 +22,17 @@ services:
   app:
     build: .
     restart: unless-stopped
-    env_file: .env
     environment:
-      ROLE:     app
-      DB_HOST:  db
+      ROLE:             app
+      DB_HOST:          db
+      DB_PORT:          ${DB_PORT:-5432}
+      DB_NAME:          ${DB_NAME:-kivitendo_auth}
+      DB_USER:          ${DB_USER:-postgres}
+      DB_PASSWORD:      ${DB_PASSWORD:-}
+      ADMIN_PASSWORD:   ${ADMIN_PASSWORD:-admin123}
+      SMTP_HOST:        mailhog
+      SMTP_PORT:        ${SMTP_PORT:-1025}
+      SECRET_MASTER_KEY: ${SECRET_MASTER_KEY:-}
     ports:
       - "${APP_PORT:-8080}:80"
     volumes:
@@ -43,15 +52,24 @@ services:
   task-server:
     build: .
     restart: unless-stopped
-    env_file: .env
     environment:
-      ROLE:     task-server
-      DB_HOST:  db
+      ROLE:             task-server
+      DB_HOST:          db
+      DB_PORT:          ${DB_PORT:-5432}
+      DB_NAME:          ${DB_NAME:-kivitendo_auth}
+      DB_USER:          ${DB_USER:-postgres}
+      DB_PASSWORD:      ${DB_PASSWORD:-}
+      ADMIN_PASSWORD:   ${ADMIN_PASSWORD:-admin123}
+      SMTP_HOST:        mailhog
+      SMTP_PORT:        ${SMTP_PORT:-1025}
+      SECRET_MASTER_KEY: ${SECRET_MASTER_KEY:-}
     volumes:
       - kivi_users:/var/www/kivitendo-erp/users
       - kivi_spool:/var/www/kivitendo-erp/spool
       - kivi_webdav:/var/www/kivitendo-erp/webdav
     depends_on:
+      # Wait for `app` (healthy) to ensure the auth DB has been initialized
+      # through the web admin interface before the task server tries to connect.
       app:
         condition: service_healthy
 
@@ -59,8 +77,8 @@ services:
     image: mailhog/mailhog:latest
     restart: unless-stopped
     ports:
-      - "${MAILHOG_PORT:-8025}:8025"
-    # SMTP on port 1025 (internal only, referenced by SMTP_HOST=mailhog, SMTP_PORT=1025)
+      - "${MAILHOG_PORT:-8025}:8025"     # Web UI
+      - "${MAILHOG_SMTP_PORT:-1025}:1025" # SMTP (internal name: mailhog, port 1025)
 
 volumes:
   postgres_data:

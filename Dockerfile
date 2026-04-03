@@ -5,15 +5,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     APACHE_RUN_GROUP=www-data \
     APACHE_LOG_DIR=/var/log/apache2
 
-# Install system packages: web server, Perl modules (matching CI), LaTeX, LibreOffice, tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Ubuntu 22.04 needs "universe" for several Perl packages (per official docs)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository universe \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     # Web server
     apache2 \
     libapache2-mod-fcgid \
     curl \
-    # PostgreSQL client (for pg_isready in entrypoint)
+    # PostgreSQL client (pg_isready used in entrypoint)
     postgresql-client \
-    # Perl modules (matching .github/workflows/main.yml)
+    # ── Perl modules from CI workflow (.github/workflows/main.yml) ──────────
     libtest-deep-perl \
     libtest-exception-perl \
     libtest-output-perl \
@@ -64,39 +68,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libuuid-tiny-perl \
     libcryptx-perl \
     cpanminus \
-    # LaTeX for PDF generation
+    # ── Required for web/FCGI operation (not in CI test list) ───────────────
+    libfcgi-perl \
+    libdaemon-generic-perl \
+    # ── Additional modules from official installation docs ───────────────────
+    libclone-perl \
+    libdatetime-perl \
+    libparams-validate-perl \
+    liburi-perl \
+    libnet-smtp-ssl-perl \
+    libnet-sslglue-perl \
+    libjson-perl \
+    libcgi-pm-perl \
+    libtry-tiny-perl \
+    libfile-flock-perl \
+    libexception-class-perl \
+    # ── LaTeX for PDF generation ─────────────────────────────────────────────
     texlive-latex-recommended \
     texlive-fonts-recommended \
     texlive-latex-extra \
     texlive-lang-german \
     latexmk \
-    # LibreOffice for OpenDocument conversion
+    # ── LibreOffice for OpenDocument conversion ───────────────────────────────
     libreoffice-writer \
     python3-uno \
-    # GhostScript for PDF processing
+    # ── GhostScript and html2ps ───────────────────────────────────────────────
     ghostscript \
-    # html2ps
     html2ps \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPAN modules without apt packages
+# Install CPAN modules not available as Debian packages
 RUN cpanm --notest HTML::Query
+
+# Configure Apache: enable required modules, install vhost
+COPY docker/apache/kivitendo.conf /etc/apache2/sites-available/kivitendo.conf
+RUN a2enmod fcgid rewrite \
+    && a2ensite kivitendo \
+    && a2dissite 000-default
 
 # Copy application code
 WORKDIR /var/www/kivitendo-erp
 COPY . .
 
-# Create writable runtime directories and set ownership
-RUN mkdir -p users spool webdav \
+# Create writable runtime directories (users/pid/ needed by task server)
+RUN mkdir -p users/pid spool webdav \
     && chown -R www-data:www-data users spool webdav \
-    && chmod 755 users spool webdav \
-    && chmod +x dispatcher.pl dispatcher.fpl scripts/task_server.pl
-
-# Configure Apache
-COPY docker/apache/kivitendo.conf /etc/apache2/sites-available/kivitendo.conf
-RUN a2enmod fcgid rewrite \
-    && a2ensite kivitendo \
-    && a2dissite 000-default
+    && chmod +x dispatcher.pl dispatcher.fpl dispatcher.fcgi scripts/task_server.pl
 
 # Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh

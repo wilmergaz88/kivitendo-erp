@@ -2,86 +2,102 @@
 set -euo pipefail
 
 APP_DIR="/var/www/kivitendo-erp"
+CONFIG_FILE="${APP_DIR}/config/kivitendo.conf"
+CONFIG_DEFAULT="${APP_DIR}/config/kivitendo.conf.default"
+
 cd "$APP_DIR"
 
 # ---------------------------------------------------------------------------
 # 1. Generate kivitendo.conf from defaults, patching with environment vars
+#
+# IMPORTANT: Keys like 'host', 'port', 'user', 'password' appear in multiple
+# INI sections. All sed substitutions are scoped to their specific section
+# using address ranges (/\[section\]/,/\[next-section\]/) to avoid
+# corrupting other sections (LDAP, IMAP, testing, etc.).
 # ---------------------------------------------------------------------------
-echo ">>> Generating config/kivitendo.conf from defaults..."
-cp config/kivitendo.conf.default config/kivitendo.conf
+echo ">>> Generating config/kivitendo.conf ..."
+cp "$CONFIG_DEFAULT" "$CONFIG_FILE"
 
-patch_ini() {
-  local section="$1"   # e.g. "authentication/database"
-  local key="$2"       # e.g. "host"
-  local value="$3"
+# [authentication] – admin password
+sed -i '/^\[authentication\]$/,/^\[authentication\/database\]$/ {
+    s|^admin_password = .*|admin_password = '"${ADMIN_PASSWORD:-admin123}"'|
+}' "$CONFIG_FILE"
 
-  # Escape special characters for sed replacement
-  local escaped_value
-  escaped_value=$(printf '%s\n' "$value" | sed 's/[\/&]/\\&/g')
-  local escaped_section
-  escaped_section=$(printf '%s\n' "$section" | sed 's/[\/]/\\\//g')
+# [authentication/database] – PostgreSQL connection for auth DB
+sed -i '/^\[authentication\/database\]$/,/^\[authentication\/ldap\]$/ {
+    s|^host\s*=.*|host     = '"${DB_HOST:-db}"'|
+    s|^port\s*=.*|port     = '"${DB_PORT:-5432}"'|
+    s|^db\s*=.*|db       = '"${DB_NAME:-kivitendo_auth}"'|
+    s|^user\s*=.*|user     = '"${DB_USER:-postgres}"'|
+    s|^password\s*=.*|password = '"${DB_PASSWORD:-}"'|
+}' "$CONFIG_FILE"
 
-  # Replace key within its section (between this section header and the next)
-  sed -i \
-    "/^\[${escaped_section}\]/,/^\[/ s/^${key}[ ]*=.*/${key} = ${escaped_value}/" \
-    config/kivitendo.conf
-}
+# [mail_delivery] – SMTP host and port (MailHog by default)
+sed -i '/^\[mail_delivery\]$/,/^\[imap_client\]$/ {
+    s|^host = .*|host = '"${SMTP_HOST:-mailhog}"'|
+}' "$CONFIG_FILE"
 
-# Authentication
-patch_ini "authentication"          "admin_password"  "${ADMIN_PASSWORD:-admin123}"
-
-# Auth database connection
-patch_ini "authentication/database" "host"     "${DB_HOST:-db}"
-patch_ini "authentication/database" "port"     "${DB_PORT:-5432}"
-patch_ini "authentication/database" "db"       "${DB_NAME:-kivitendo_auth}"
-patch_ini "authentication/database" "user"     "${DB_USER:-kivitendo}"
-patch_ini "authentication/database" "password" "${DB_PASSWORD:-}"
-
-# Mail delivery
-patch_ini "mail_delivery" "host" "${SMTP_HOST:-mailhog}"
 if [ -n "${SMTP_PORT:-}" ]; then
-  patch_ini "mail_delivery" "port" "$SMTP_PORT"
+    sed -i '/^\[mail_delivery\]$/,/^\[imap_client\]$/ {
+        s|^#port = .*|port = '"$SMTP_PORT"'|
+        s|^port = .*|port = '"$SMTP_PORT"'|
+    }' "$CONFIG_FILE"
 fi
 
-# Secrets
+# [secrets] – master encryption key
 if [ -n "${SECRET_MASTER_KEY:-}" ]; then
-  patch_ini "secrets" "master_key" "$SECRET_MASTER_KEY"
+    sed -i '/^\[secrets\]$/,/^\[console\]$/ {
+        s|^master_key = .*|master_key = '"$SECRET_MASTER_KEY"'|
+    }' "$CONFIG_FILE"
 fi
+
+# [task_server] – drop privileges to www-data (task server's own setuid support)
+sed -i '/^\[task_server\]$/,/^\[task_server\/notify_on_failure\]$/ {
+    s|^run_as = .*|run_as = www-data|
+}' "$CONFIG_FILE"
 
 echo ">>> config/kivitendo.conf written."
 
 # ---------------------------------------------------------------------------
 # 2. Wait for PostgreSQL to be ready
 # ---------------------------------------------------------------------------
-echo ">>> Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432}..."
+echo ">>> Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432} ..."
 MAX_WAIT=60
 WAITED=0
-until pg_isready -h "${DB_HOST:-db}" -p "${DB_PORT:-5432}" -U "${DB_USER:-kivitendo}" -q; do
-  if [ "$WAITED" -ge "$MAX_WAIT" ]; then
-    echo "ERROR: PostgreSQL did not become ready within ${MAX_WAIT}s. Aborting."
-    exit 1
-  fi
-  sleep 2
-  WAITED=$((WAITED + 2))
+until pg_isready -h "${DB_HOST:-db}" -p "${DB_PORT:-5432}" -U "${DB_USER:-postgres}" -q; do
+    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+        echo "ERROR: PostgreSQL not ready after ${MAX_WAIT}s. Aborting."
+        exit 1
+    fi
+    sleep 2
+    WAITED=$((WAITED + 2))
 done
 echo ">>> PostgreSQL is ready."
 
 # ---------------------------------------------------------------------------
-# 3. Fix permissions on runtime directories
+# 3. Fix permissions on volume-mounted runtime directories
+#    (volumes are initially owned by root; app runs as www-data)
 # ---------------------------------------------------------------------------
-chown -R www-data:www-data users spool webdav 2>/dev/null || true
+mkdir -p users/pid spool webdav
+chown -R www-data:www-data users spool webdav config 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 4. Start the appropriate service
+# 4. Start the requested service
 # ---------------------------------------------------------------------------
 ROLE="${ROLE:-app}"
 
 if [ "$ROLE" = "task-server" ]; then
-  echo ">>> Starting kivitendo task server..."
-  exec perl scripts/task_server.pl -f start
+    # Remove stale PID file left over from a previous container run.
+    # Daemon::Generic refuses to start if the PID file already exists.
+    rm -f users/pid/*.pid
+
+    echo ">>> Starting kivitendo task server (foreground mode) ..."
+    # The task server drops privileges to 'run_as' user via its own setuid()
+    exec perl scripts/task_server.pl -f start
 else
-  echo ">>> Starting Apache2..."
-  # Remove stale PID file if present
-  rm -f /var/run/apache2/apache2.pid
-  exec apache2ctl -D FOREGROUND
+    # Remove stale Apache PID to prevent "Address already in use" on restart
+    rm -f /var/run/apache2/apache2.pid
+
+    echo ">>> Starting Apache2 ..."
+    exec apache2ctl -D FOREGROUND
 fi
