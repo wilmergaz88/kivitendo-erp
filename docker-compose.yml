@@ -20,7 +20,9 @@ services:
       start_period: 10s
 
   app:
-    build: .
+    build:
+      context: .
+      target: app
     restart: unless-stopped
     environment:
       ROLE:             app
@@ -50,7 +52,9 @@ services:
       start_period: 60s
 
   task-server:
-    build: .
+    build:
+      context: .
+      target: app
     restart: unless-stopped
     environment:
       ROLE:             task-server

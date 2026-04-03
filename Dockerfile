@@ -1,23 +1,31 @@
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS base
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    APACHE_RUN_USER=www-data \
-    APACHE_RUN_GROUP=www-data \
-    APACHE_LOG_DIR=/var/log/apache2
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Ubuntu 22.04 needs "universe" for several Perl packages (per official docs)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository universe \
     && apt-get update \
+    # ── Layer A: document-generation tools (~1.5 GB, changes almost never) ───
     && apt-get install -y --no-install-recommends \
-    # Web server
+    texlive-latex-recommended \
+    texlive-fonts-recommended \
+    texlive-latex-extra \
+    texlive-lang-german \
+    latexmk \
+    libreoffice-writer \
+    python3-uno \
+    ghostscript \
+    html2ps \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Layer B: web server + Perl modules (~400 MB, changes when deps added) ───
+RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-fcgid \
     curl \
-    # PostgreSQL client (pg_isready used in entrypoint)
     postgresql-client \
-    # ── Perl modules from CI workflow (.github/workflows/main.yml) ──────────
     libtest-deep-perl \
     libtest-exception-perl \
     libtest-output-perl \
@@ -67,11 +75,8 @@ RUN apt-get update \
     libppi-perl \
     libuuid-tiny-perl \
     libcryptx-perl \
-    cpanminus \
-    # ── Required for web/FCGI operation (not in CI test list) ───────────────
     libfcgi-perl \
     libdaemon-generic-perl \
-    # ── Additional modules from official installation docs ───────────────────
     libclone-perl \
     libdatetime-perl \
     libparams-validate-perl \
@@ -83,39 +88,34 @@ RUN apt-get update \
     libtry-tiny-perl \
     libfile-flock-perl \
     libexception-class-perl \
-    # ── LaTeX for PDF generation ─────────────────────────────────────────────
-    texlive-latex-recommended \
-    texlive-fonts-recommended \
-    texlive-latex-extra \
-    texlive-lang-german \
-    latexmk \
-    # ── LibreOffice for OpenDocument conversion ───────────────────────────────
-    libreoffice-writer \
-    python3-uno \
-    # ── GhostScript and html2ps ───────────────────────────────────────────────
-    ghostscript \
-    html2ps \
+    cpanminus \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPAN modules not available as Debian packages
+# ── Layer C: CPAN modules not available as Debian packages (~5 MB) ──────────
 RUN cpanm --notest HTML::Query
 
-# Configure Apache: enable required modules, install vhost
+
+# ── app stage: inherits all deps from base, rebuilt on code/config changes ──
+FROM base AS app
+
+ENV APACHE_RUN_USER=www-data \
+    APACHE_RUN_GROUP=www-data \
+    APACHE_LOG_DIR=/var/log/apache2
+
+# Apache wiring (changes rarely — keep above COPY . .)
 COPY docker/apache/kivitendo.conf /etc/apache2/sites-available/kivitendo.conf
 RUN a2enmod fcgid rewrite \
     && a2ensite kivitendo \
     && a2dissite 000-default
 
-# Copy application code
+# Application code (invalidated on every code change)
 WORKDIR /var/www/kivitendo-erp
 COPY . .
 
-# Create writable runtime directories (users/pid/ needed by task server)
 RUN mkdir -p users/pid spool webdav \
     && chown -R www-data:www-data users spool webdav \
     && chmod +x dispatcher.pl dispatcher.fpl dispatcher.fcgi scripts/task_server.pl
 
-# Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
